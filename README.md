@@ -1,0 +1,2 @@
+# MSU
+CS MSU projects
