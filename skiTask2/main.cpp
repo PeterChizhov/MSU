@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <iostream>
+#include <fstream>
 #include <cmath>
 #include "mpi.h"
 
@@ -12,20 +13,25 @@ int main(int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Request request_data, request_ind;
     MPI_Status status_data, status_ind;
-    int index = 1, block_size = 50000/(size-1), iter = 0;
+    // int index = 1, block_size = 50000/(size-1), iter = 0;
+    int index = 1, block_size = 2*16384/(size-1), iter = 0;
     double x, y, z, *xyzBuff, *recv_buff;
     double int_sum = 0.0, master_sum = 0.0, result = 0.0;
     double eps = atof(argv[1]);
+    int seed = atoi(argv[2]);
     double delta = 1.0/(size-1);
+
+    double slave_start_time = 0.0, slave_end_time = 0.0, slave_total_time = 0.0;
+    double result_time = 0.0;
     if (!rank) {
-        srand(10);
+        srand(seed);
         xyzBuff = new double[(size - 1) * block_size * 3];
         for (int rank_slave = 1; rank_slave < size; ++rank_slave)
             MPI_Isend(&index, 1, MPI_INT, rank_slave, 2, MPI_COMM_WORLD, &request_ind);
     } else {
         recv_buff = new double[block_size * 3];
     }
-    double start_time = MPI_Wtime();
+    //double start_time = MPI_Wtime();
     while (index) {
         if (!rank) //Master
         {
@@ -51,6 +57,8 @@ int main(int argc, char *argv[]) {
             }
             MPI_Recv(recv_buff, block_size * 3, MPI_DOUBLE, 0, 1,
                      MPI_COMM_WORLD, &status_data);
+
+            slave_start_time = MPI_Wtime();
             for (int rand_point_i = 0; rand_point_i < block_size; ++rand_point_i) {
                 double sum_xyz =
                         recv_buff[3 * rand_point_i] + recv_buff[3 * rand_point_i + 1] + recv_buff[3 * rand_point_i + 2];
@@ -59,6 +67,10 @@ int main(int argc, char *argv[]) {
                     int_sum += 1.0 / (sum_xyz * sum_xyz * sum_xyz);
                 }
             }
+
+            slave_end_time = MPI_Wtime() - slave_start_time;
+            slave_total_time += slave_end_time;
+
         }
         MPI_Reduce(&int_sum, &master_sum, 1, MPI_DOUBLE,
                    MPI_SUM, 0, MPI_COMM_WORLD);
@@ -74,10 +86,14 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    double end_time = MPI_Wtime();
-    double result_time, time = end_time - start_time;
-    MPI_Reduce(&time, &result_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    // double end_time = MPI_Wtime();
+    // double result_time, time = end_time - start_time;
+    MPI_Reduce(&slave_total_time, &result_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    // MPI_Reduce(&time, &result_time, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if (rank == 0) {
+        std::ofstream outfile;
+        outfile.open("output.csv", std::ios_base::app);
+        outfile << size << ";" << seed << ";" << eps << ";" << result_time << ";" << std::abs(TARGET - result) << ";" << (size - 1) * block_size * iter << ";" << std::endl;
         std::cout << "True: " << TARGET << std::endl;
         std::cout << "Integral: " << result << std::endl;
         std::cout << "Eps: " << std::abs(TARGET - result) << std::endl;
